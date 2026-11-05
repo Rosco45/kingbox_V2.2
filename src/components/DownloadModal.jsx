@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Download, Check, HardDrive, ShieldCheck, Film, Tv, AlertCircle, Loader2, Server } from 'lucide-react';
 import { resolveRealDownload, buildDownloadStreamUrl } from '../utils/franimeHosters';
+import { downloadMediaFile } from '../utils/nativeDownloader';
 
 export default function DownloadModal({ media, episode, onClose, onDownloadComplete }) {
   const isShow = media?.type === 'tv' || media?.type === 'anime';
@@ -95,27 +96,19 @@ export default function DownloadModal({ media, episode, onClose, onDownloadCompl
   const handleStartDownload = async () => {
     setIsDownloading(true);
     setDownloadStep('Téléchargement');
-    setProgress(15);
-    setStatusMessage('Connexion au serveur de fichiers HD...');
+    setProgress(5);
+    setStatusMessage('Résolution du flux haute vitesse...');
 
     const epSuffix = isShow
       ? `_S${String(selectedSeason).padStart(2, '0')}E${String(selectedEpisodeNum).padStart(2, '0')}`
       : '';
     const cleanFileName = `${(media.title || 'Kingbox_Media').replace(/[^a-zA-Z0-9_-]/g, '_')}${epSuffix}_${quality}_${audio}.mp4`;
 
-    const progressTimer = setInterval(() => {
-      setProgress((prev) => {
-        if (prev >= 88) return 88;
-        return prev + 7;
-      });
-    }, 350);
-
     try {
       let finalResolved = resolvedInfo;
 
-      // Si le lien nécessite la validation du jeton direct Uqload (ex: Dune 2) ou n'est pas encore résolu
       if (!finalResolved || (finalResolved.hasPendingDirectMp4 && !finalResolved.directMp4Url)) {
-        setStatusMessage('Déverrouillage du lien MP4 direct haute vitesse...');
+        setStatusMessage('Déverrouillage du lien MP4 direct...');
         const fresh = await resolveRealDownload({
           media,
           episode: activeEpisodeObj,
@@ -128,39 +121,27 @@ export default function DownloadModal({ media, episode, onClose, onDownloadCompl
         }
       }
 
-      clearInterval(progressTimer);
-      setProgress(100);
-      setStatusMessage('Lancement du téléchargement du fichier complet (.mp4)...');
-
       const streamDownloadUrl = buildDownloadStreamUrl(finalResolved, cleanFileName);
       const directMp4Url = finalResolved?.directMp4Url || null;
 
-      // Choisir la meilleure URL de téléchargement (flux serveur avec Content-Disposition: attachment ou URL directe MP4)
-      let downloadHref = streamDownloadUrl || directMp4Url;
-
-      // Vérifier si le serveur Vite /api/download-stream est joignable (mode Web vs APK Android autonome)
-      if (streamDownloadUrl && directMp4Url) {
-        try {
-          const checkRes = await fetch('/api/vf-resolve?tmdbId=0', { method: 'HEAD' });
-          if (!checkRes.ok) {
-            downloadHref = directMp4Url;
-          }
-        } catch {
-          downloadHref = directMp4Url;
-        }
+      let downloadHref = directMp4Url || streamDownloadUrl;
+      if (!downloadHref) {
+        throw new Error('Aucun flux vidéo direct disponible pour le téléchargement hors-ligne.');
       }
 
-      if (downloadHref) {
-        const downloadLink = document.createElement('a');
-        downloadLink.href = downloadHref;
-        downloadLink.download = cleanFileName;
-        downloadLink.style.display = 'none';
-        document.body.appendChild(downloadLink);
-        downloadLink.click();
-        document.body.removeChild(downloadLink);
-      }
+      setStatusMessage('Téléchargement réel du fichier en cours...');
+      setProgress(10);
 
-      // Enregistrer toutes les vraies métadonnées dans Mes Téléchargements pour une lecture intégrale
+      // Téléchargement réel (stockage local Android Documents/Data ou blob PC)
+      const downloadedResult = await downloadMediaFile(downloadHref, cleanFileName, (pct) => {
+        setProgress(pct);
+        setStatusMessage(`Téléchargement : ${pct}%`);
+      });
+
+      setProgress(100);
+      setStatusMessage('Fichier prêt pour la lecture hors-ligne !');
+
+      // Enregistrer l'URL locale réelle dans Mes Téléchargements
       const downloadItem = {
         id: `dl-${media.tmdbId || media.id}-${isShow ? `s${selectedSeason}e${selectedEpisodeNum}` : 'movie'}-${audio.toLowerCase()}`,
         mediaId: media.id,
@@ -180,18 +161,19 @@ export default function DownloadModal({ media, episode, onClose, onDownloadCompl
         quality,
         audio: finalResolved?.resolvedLang || audio,
         preferredLang: audio.toLowerCase(),
-        preferredHoster: directMp4Url ? 'direct' : 'sibnet',
-        provider: finalResolved?.provider || 'Serveur Direct HD',
-        fileTitle: finalResolved?.fileTitle || cleanFileName,
+        preferredHoster: 'direct',
+        provider: downloadedResult.isNative ? 'Stockage Local Android' : 'Fichier Téléchargé PC',
+        fileTitle: cleanFileName,
         size:
           finalResolved?.sizeFormatted ||
           qualityOptions.find((q) => q.id === quality)?.size ||
           baseSizeLabel,
         date: new Date().toLocaleDateString('fr-FR'),
-        directMp4Url: directMp4Url,
-        hlsUrl: finalResolved?.hlsUrl || null,
-        downloadStreamUrl: streamDownloadUrl || directMp4Url || null,
-        videoUrl: directMp4Url || streamDownloadUrl || media.videoUrl
+        directMp4Url: downloadedResult.uri,
+        localPath: downloadedResult.localPath,
+        isOfflineReady: true,
+        downloadStreamUrl: downloadedResult.uri,
+        videoUrl: downloadedResult.uri
       };
 
       onDownloadComplete?.(downloadItem);
@@ -201,11 +183,11 @@ export default function DownloadModal({ media, episode, onClose, onDownloadCompl
         setDownloadStep('Terminé');
         setTimeout(() => {
           onClose();
-        }, 1400);
-      }, 600);
+        }, 1200);
+      }, 500);
     } catch (err) {
-      clearInterval(progressTimer);
-      console.error('Erreur de téléchargement:', err);
+      console.error('Erreur de téléchargement réel:', err);
+      alert(`Erreur de téléchargement : ${err.message || 'Flux inaccessible'}`);
       setIsDownloading(false);
       onClose();
     }

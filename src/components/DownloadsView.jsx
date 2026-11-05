@@ -1,5 +1,6 @@
-import React from 'react';
-import { Download, Trash2, Play, HardDrive, Sparkles, WifiOff, Server } from 'lucide-react';
+import React, { useState } from 'react';
+import { Download, Trash2, Play, HardDrive, Sparkles, WifiOff, Server, CheckCircle2, Loader2, Check } from 'lucide-react';
+import { downloadMediaFile, deleteLocalMediaFile } from '../utils/nativeDownloader';
 
 export default function DownloadsView({ 
   downloads, 
@@ -7,16 +8,36 @@ export default function DownloadsView({
   onDeleteDownload, 
   onExplore 
 }) {
-  const handleDirectSave = (item) => {
+  const [downloadingId, setDownloadingId] = useState(null);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [statusMessage, setStatusMessage] = useState(null);
+
+  const handleDelete = async (item) => {
+    if (item.localPath) {
+      await deleteLocalMediaFile(item.localPath);
+    }
+    onDeleteDownload(item.id);
+  };
+
+  const handleDirectSave = async (item) => {
     const targetUrl = item.downloadStreamUrl || item.directMp4Url || item.videoUrl;
     if (!targetUrl) return;
-    const link = document.createElement('a');
-    link.href = targetUrl;
-    link.download = item.fileTitle || `${(item.title || 'Kingbox').replace(/[^a-zA-Z0-9_-]/g, '_')}.mp4`;
-    link.style.display = 'none';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    
+    const filename = item.fileTitle || `${(item.title || 'Kingbox').replace(/[^a-zA-Z0-9_-]/g, '_')}.mp4`;
+    setDownloadingId(item.id);
+    setDownloadProgress(0);
+
+    try {
+      const res = await downloadMediaFile(targetUrl, filename, (progress) => {
+        setDownloadProgress(progress);
+      });
+      setStatusMessage(res.isNative ? `Enregistré dans le stockage local (${filename})` : `Téléchargement terminé : ${filename}`);
+      setTimeout(() => setStatusMessage(null), 4000);
+    } catch (err) {
+      alert(`Erreur de téléchargement : ${err.message}`);
+    } finally {
+      setDownloadingId(null);
+    }
   };
 
   return (
@@ -42,6 +63,13 @@ export default function DownloadsView({
           </div>
         )}
       </div>
+
+      {statusMessage && (
+        <div className="mb-6 p-3 bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 rounded-2xl text-xs font-bold flex items-center space-x-2 animate-fadeIn">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{statusMessage}</span>
+        </div>
+      )}
 
       {downloads.length > 0 ? (
         <div className="space-y-4">
@@ -108,16 +136,26 @@ export default function DownloadsView({
                 {(item.downloadStreamUrl || item.directMp4Url) && (
                   <button
                     onClick={() => handleDirectSave(item)}
-                    className="flex items-center space-x-1.5 bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-amber-500/30 px-3 py-2 rounded-xl text-xs font-bold transition-all active:scale-95"
+                    disabled={downloadingId === item.id}
+                    className="flex items-center space-x-1.5 bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-amber-500/30 px-3 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 disabled:opacity-50"
                     title="Enregistrer le fichier .MP4 sur l'appareil"
                   >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>.MP4</span>
+                    {downloadingId === item.id ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>{downloadProgress > 0 ? `${downloadProgress}%` : '...'}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-3.5 h-3.5" />
+                        <span>.MP4</span>
+                      </>
+                    )}
                   </button>
                 )}
 
                 <button
-                  onClick={() => onDeleteDownload(item.id)}
+                  onClick={() => handleDelete(item)}
                   className="p-2 rounded-xl bg-zinc-800 hover:bg-red-500/20 hover:text-red-400 text-zinc-400 border border-zinc-700/60 transition-colors"
                   title="Supprimer du stockage"
                 >

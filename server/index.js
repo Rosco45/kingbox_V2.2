@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { Bonjour } from 'bonjour-service';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = resolve(ROOT, 'data');
@@ -203,4 +204,18 @@ server.listen(PORT, HOST, () => {
   console.log(`   PC : http://localhost:${PORT}/api/health`);
   addresses.forEach(ip => console.log(`   Réseau : http://${ip}:${PORT}/api/health`));
   console.log(`   Base SQLite : ${resolve(DATA_DIR, 'kingbox.sqlite')}\n`);
+
+  // Découverte réseau locale (mDNS / Zeroconf / Bonjour)
+  try {
+    const bonjour = new Bonjour();
+    bonjour.publish({
+      name: `Kingbox Server (${os.hostname()})`,
+      type: 'kingbox',
+      port: PORT,
+      txt: { version: '2.2.0', app: 'kingbox' }
+    });
+    console.log(`   📡 Annonce mDNS active : service "_kingbox._tcp.local" sur le port ${PORT}`);
+  } catch (err) {
+    console.warn(`   ⚠️ Annonce mDNS non disponible :`, err?.message || err);
+  }
 });
